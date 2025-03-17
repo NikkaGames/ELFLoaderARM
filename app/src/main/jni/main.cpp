@@ -25,7 +25,6 @@
 #include "log.h"
 #include "xdl/include/xdl.h"
 #include "hide.h"
-//#include "fake_dlfcn.h"
 
 #ifdef __LP64__
 #define Elf_Ehdr Elf64_Ehdr
