@@ -23,8 +23,6 @@
 #include "Includes/obfuscate.h"
 #include "zygisk.hpp"
 #include "log.h"
-#include "xdl/include/xdl.h"
-#include "hide.h"
 
 #ifdef __LP64__
 #define Elf_Ehdr Elf64_Ehdr
@@ -90,43 +88,6 @@ void fhide() {
 		fprintf(maps, "");
     	fclose(maps);
 	}
-}
-
-bool file_exists(const std::string& name) {
-  struct stat buffer;   
-  return (stat(name.c_str(), &buffer) == 0); 
-}
-
-long get_file_size(std::string filename) {
-    struct stat stat_buf;
-    int rc = stat(filename.c_str(), &stat_buf);
-    return rc == 0 ? stat_buf.st_size : -1;
-}
-
-void dfid(const std::string& path) {
-    DIR* dir = opendir(path.c_str());
-    if (!dir) {
-        return;
-    }
-    struct dirent* entry;
-    struct stat fileStat;
-    std::string fullPath;
-    while ((entry = readdir(dir)) != nullptr) {
-        fullPath = path + "/" + entry->d_name;
-        if (stat(fullPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-            unlink(fullPath.c_str());
-        }
-    }
-    closedir(dir);
-}
-
-std::string genrand() {
-    std::string id;
-    static const char gsfid[] = "abcdef";
-    srand((unsigned)time(nullptr) * getpid());
-    id.reserve(6);
-    for (int i = 0; i < 6; ++i) id += gsfid[rand() % (sizeof(gsfid) - 1)];
-    return id;
 }
 
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
