@@ -287,8 +287,6 @@ public:
 		api_ = api;
     }
     void preAppSpecialize(AppSpecializeArgs *args) override {
-        fhide();
-        prctl(PR_SET_NAME, std::string(OBFUSCATE("com.google.android.apps.maps")).c_str(), 0, 0, 0);
 		std::string process_name;
 		const char *process_cstr = env_->GetStringUTFChars(args->nice_name, nullptr);
 		if (process_cstr) {
