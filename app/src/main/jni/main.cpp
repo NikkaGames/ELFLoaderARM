@@ -214,7 +214,6 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                 void *addr = (char *)obj.base + r->r_offset;
                 Elf64_Xword type = ELF64_R_TYPE(r->r_info);
                 Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-
                 if (type == R_AARCH64_RELATIVE) {
                     *(Elf64_Addr *)addr = (Elf64_Addr)((char *)obj.base + r->r_addend);
                 } else if (type == R_AARCH64_GLOB_DAT) {
@@ -228,7 +227,6 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                 void *addr = (char *)obj.base + r->r_offset;
                 Elf64_Xword type = ELF64_R_TYPE(r->r_info);
                 Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-
                 if (type == R_AARCH64_JUMP_SLOT) {
                     Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
                     const char *sym_name = (char *)(strtab + symbol->st_name);
@@ -248,12 +246,11 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                 }
                 dyn++;
             }
-            
             if (init_array && init_array_size > 0) {
                 size_t count = init_array_size / sizeof(Elf64_Addr);
                 LOGI("Calling %zu constructors from DT_INIT_ARRAY", count);
                 for (size_t j = 0; j < count; j++) {
-                    if (init_array[j]) {  // Prevent calling NULL constructors
+                    if (init_array[j]) {
                         LOGI("Calling constructor at %p", (void *)init_array[j]);
                         ((void (*)())init_array[j])();
                     }
