@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+
+    compileSdk 32
+    buildToolsVersion "34.0.4"
+    //ndkVersion "21.4.7075529"
+    ndkVersion "24.0.8215888"
+
+    defaultConfig {
+        applicationId "zygisk.nikkagames.imgui"
+        minSdk 21
+        targetSdk 29
+        versionCode 11
+        versionName "2.1"
+        ndk {
+            abiFilters  /*'armeabi-v7a',*/ 'arm64-v8a'/*, 'x86_64'*/
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    externalNativeBuild {
+        ndkBuild {
+            path file('src/main/jni/Android.mk')
+        }
+    }
+}
+
+dependencies {
+}
