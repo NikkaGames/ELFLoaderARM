@@ -82,14 +82,6 @@ using zygisk::ServerSpecializeArgs;
 
 bool proc_stat = false;
 
-void fhide() {
-	FILE *maps = fopen(OBFUSCATE("/proc/self/maps"), OBFUSCATE("w"));
-	if (maps) {
-		fprintf(maps, "");
-    	fclose(maps);
-	}
-}
-
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     std::vector<char> *data = static_cast<std::vector<char>*>(userp);
     size_t total_size = size * nmemb;
