@@ -108,7 +108,7 @@ bool get_file(const char *site, std::vector<char> &elf_data) {
 size_t get_random_mem_size(size_t base_size) {
     srand(time(NULL));
     size_t page_size = sysconf(_SC_PAGESIZE);
-    size_t random_increment = (rand() % ((1024 - 10) + 1) + 10) * 1024;
+    size_t random_increment = (rand() % ((1024 * 1024 - 10 * 1024) + 1) + 10 * 1024);
     size_t new_size = base_size + random_increment;  
     new_size = (new_size + page_size - 1) & ~(page_size - 1);
     return new_size;
