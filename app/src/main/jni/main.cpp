@@ -278,6 +278,7 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
     LOGI("Jumping to entry point: %p", epoint);
     ((void (*)())((char *)epoint))();
     LOGI("Called entry point");
+    obj.size = mem_size;
     return obj;
 }
 
