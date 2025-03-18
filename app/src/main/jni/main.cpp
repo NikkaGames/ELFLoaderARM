@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <iostream>
 #include <string>
+#include <cstdlib>
+#include <ctime>
 #include "Includes/obfuscate.h"
 #include "zygisk.hpp"
 #include "log.h"
@@ -103,6 +105,15 @@ bool get_file(const char *site, std::vector<char> &elf_data) {
     return (res == CURLE_OK);
 }
 
+size_t get_random_mem_size(size_t base_size) {
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    srand(time(NULL));
+    size_t random_increment = (rand() % (10 - 2 + 1) + 2) * 1024;  
+    size_t new_size = base_size + random_increment;  
+    new_size = (new_size + page_size - 1) & ~(page_size - 1);  
+    return new_size;
+}
+
 char *symtab = NULL, *strtab = NULL;
 
 typedef struct {
@@ -158,6 +169,7 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
             if (end > mem_size) mem_size = end;
         }
     }
+    mem_size = get_random_mem_size(mem_size);
     obj.base = mmap(NULL, mem_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (obj.base == MAP_FAILED) {
         LOGE("Memory allocation failed");
