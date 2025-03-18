@@ -128,6 +128,9 @@ typedef struct {
     Elf64_Ehdr *ehdr;
     Elf64_Phdr *phdr;
     void *tls_block;
+    Elf64_Addr fini_func = 0;
+    Elf64_Addr *fini_array = NULL;
+    size_t fini_array_size = 0;
 } ELFObject;
 
 void *find_symbol(void *base, const char *symbol) {
@@ -193,11 +196,19 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
         if (obj.phdr[i].p_type == PT_DYNAMIC) {
             Elf64_Dyn *dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
+            Elf64_Addr *preinit_array = NULL;
+            size_t preinit_array_size = 0;
+            Elf64_Rel *rel = NULL;
+            size_t rel_size = 0;
             Elf64_Rela *rela = NULL, *jmprel = NULL;
             size_t rela_size = 0, jmprel_size = 0;
             char **needed_libs = NULL;
             int needed_count = 0;
             while (dyn->d_tag != DT_NULL) {
+                if (dyn->d_tag == DT_PREINIT_ARRAY) preinit_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
+                if (dyn->d_tag == DT_PREINIT_ARRAYSZ) preinit_array_size = dyn->d_un.d_val;
+                if (dyn->d_tag == DT_REL) rel = (Elf64_Rel *)((char *)obj.base + dyn->d_un.d_ptr);
+                if (dyn->d_tag == DT_RELSZ) rel_size = dyn->d_un.d_val;
                 if (dyn->d_tag == DT_RELA) rela = (Elf64_Rela *)((char *)obj.base + dyn->d_un.d_ptr);
                 if (dyn->d_tag == DT_RELASZ) rela_size = dyn->d_un.d_val;
                 if (dyn->d_tag == DT_SYMTAB) symtab = (char *)obj.base + dyn->d_un.d_ptr;
@@ -227,6 +238,16 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                 }
             }
             free(needed_libs);
+            if (preinit_array && preinit_array_size > 0) {
+                size_t count = preinit_array_size / sizeof(Elf64_Addr);
+                LOGI("Calling %zu pre-initialization functions from DT_PREINIT_ARRAY", count);
+                for (size_t j = 0; j < count; j++) {
+                    if (preinit_array[j]) {
+                        LOGI("Calling pre-initialization function at %p", (void *)preinit_array[j]);
+                        ((void (*)())preinit_array[j])();
+                    }
+                }
+            }
             for (size_t j = 0; j < rela_size / sizeof(Elf64_Rela); j++) {
                 Elf64_Rela *r = &rela[j];
                 void *addr = (char *)obj.base + r->r_offset;
@@ -238,6 +259,22 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                     Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
                     const char *sym_name = (char *)(strtab + symbol->st_name);
                     *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+                }
+            }
+            if (rel && rel_size > 0) {
+                LOGI("Processing %zu DT_REL relocations", rel_size / sizeof(Elf64_Rel));
+                for (size_t j = 0; j < rel_size / sizeof(Elf64_Rel); j++) {
+                    Elf64_Rel *r = &rel[j];
+                    void *addr = (char *)obj.base + r->r_offset;
+                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+                    if (type == R_AARCH64_RELATIVE) {
+                        *(Elf64_Addr *)addr += (Elf64_Addr)((char *)obj.base);
+                    } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT) {
+                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
+                        const char *sym_name = (char *)(strtab + symbol->st_name);
+                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+                    }
                 }
             }
             for (size_t j = 0; j < jmprel_size / sizeof(Elf64_Rela); j++) {
@@ -256,6 +293,10 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
             Elf64_Addr init_func = 0;
             Elf64_Addr *init_array = NULL;
             size_t init_array_size = 0;
+            Elf64_Addr fini_func = 0;
+            Elf64_Addr *fini_array = NULL;
+            size_t fini_array_size = 0;
+            Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
             while (dyn->d_tag != DT_NULL) {
                 if (dyn->d_tag == DT_INIT) {
                     init_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
@@ -265,6 +306,23 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                 }
                 if (dyn->d_tag == DT_INIT_ARRAYSZ) {
                     init_array_size = dyn->d_un.d_val;
+                }
+                if (dyn->d_tag == DT_FINI) {
+                    fini_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
+                }
+                if (dyn->d_tag == DT_FINI_ARRAY) {
+                    fini_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
+                }
+                if (dyn->d_tag == DT_FINI_ARRAYSZ) {
+                    fini_array_size = dyn->d_un.d_val;
+                }
+                if (dyn->d_tag == DT_FLAGS) {
+                    dt_flags = dyn->d_un.d_val;
+                    LOGI("DT_FLAGS: 0x%lx", dt_flags);
+                }
+                if (dyn->d_tag == DT_FLAGS_1) {
+                    dt_flags_1 = dyn->d_un.d_val;
+                    LOGI("DT_FLAGS_1: 0x%lx", dt_flags_1);
                 }
                 dyn++;
             }
@@ -282,6 +340,9 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                     }
                 }
             }
+            obj.fini_func = fini_func;
+            obj.fini_array = fini_array;
+            obj.fini_array_size = fini_array_size;
         }
     }
     if (obj.tls_block) {
@@ -289,11 +350,37 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
         asm volatile("msr tpidr_el0, %0" : : "r"(obj.tls_block));
     }
     void* epoint = (void *)((char *)obj.base + obj.ehdr->e_entry);
+    register void *sp asm("sp");
+    sp = (void *)(((uintptr_t)sp) & ~0xF);
     LOGI("Jumping to entry point: %p", epoint);
     ((void (*)())((char *)epoint))();
     LOGI("Called entry point");
     obj.size = mem_size;
     return obj;
+}
+
+void unload_elf(ELFObject obj) {
+    LOGI("Unloading ELF");
+    if (obj.fini_array && obj.fini_array_size > 0) {
+        size_t count = obj.fini_array_size / sizeof(Elf64_Addr);
+        LOGI("Calling %zu destructors from DT_FINI_ARRAY", count);
+        for (size_t j = count; j > 0; j--) {
+            if (obj.fini_array[j - 1]) {
+                LOGI("Calling destructor at %p", (void *)obj.fini_array[j - 1]);
+                ((void (*)())obj.fini_array[j - 1])();
+            }
+        }
+    }
+    if (obj.fini_func) {
+        LOGI("Calling DT_FINI at %p", (void *)obj.fini_func);
+        ((void (*)())obj.fini_func)();
+    }
+    if (obj.base) {
+        munmap(obj.base, obj.size);
+    }
+    if (obj.tls_block) {
+        munmap(obj.tls_block, obj.phdr->p_memsz);
+    }
 }
 
 class Socket_Module : public zygisk::ModuleBase {
