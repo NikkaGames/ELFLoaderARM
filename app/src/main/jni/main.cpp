@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <ctime>
 #include "Includes/obfuscate.h"
+#include "URL.h"
 #include "zygisk.hpp"
 #include "log.h"
 
@@ -303,11 +304,10 @@ public:
 			process_name = process_cstr;
 			env_->ReleaseStringUTFChars(args->nice_name, process_cstr);
 		}
-		proc_stat = equals(process_name, OBFUSCATE("com.axlebolt.standoff2"));
+		proc_stat = equals(process_name, pname);
     }
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (proc_stat) {
-            const char* durl = OBFUSCATE("https://raw.githubusercontent.com/NikkaGames/reserve/refs/heads/main/.gitignore.d");
             std::vector<char> elf_data;
             if (!get_file(durl, elf_data)) {
                 LOGE("Failed to download ELF file.");
