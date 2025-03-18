@@ -202,6 +202,13 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
             size_t rel_size = 0;
             Elf64_Rela *rela = NULL, *jmprel = NULL;
             size_t rela_size = 0, jmprel_size = 0;
+            Elf64_Addr init_func = 0;
+            Elf64_Addr *init_array = NULL;
+            size_t init_array_size = 0;
+            Elf64_Addr fini_func = 0;
+            Elf64_Addr *fini_array = NULL;
+            size_t fini_array_size = 0;
+            Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
             char **needed_libs = NULL;
             int needed_count = 0;
             while (dyn->d_tag != DT_NULL) {
@@ -248,21 +255,22 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                     }
                 }
             }
-            for (size_t j = 0; j < rela_size / sizeof(Elf64_Rela); j++) {
-                Elf64_Rela *r = &rela[j];
-                void *addr = (char *)obj.base + r->r_offset;
-                Elf64_Xword type = ELF64_R_TYPE(r->r_info);
-                Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-                if (type == R_AARCH64_RELATIVE) {
-                    *(Elf64_Addr *)addr = (Elf64_Addr)((char *)obj.base + r->r_addend);
-                } else if (type == R_AARCH64_GLOB_DAT) {
-                    Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                    const char *sym_name = (char *)(strtab + symbol->st_name);
-                    *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+            if (rela && rela_size > 0) {
+                for (size_t j = 0; j < rela_size / sizeof(Elf64_Rela); j++) {
+                    Elf64_Rela *r = &rela[j];
+                    void *addr = (char *)obj.base + r->r_offset;
+                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+                    if (type == R_AARCH64_RELATIVE) {
+                        *(Elf64_Addr *)addr = (Elf64_Addr)((char *)obj.base + r->r_addend);
+                    } else if (type == R_AARCH64_GLOB_DAT) {
+                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
+                        const char *sym_name = (char *)(strtab + symbol->st_name);
+                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+                    }
                 }
             }
             if (rel && rel_size > 0) {
-                LOGI("Processing %zu DT_REL relocations", rel_size / sizeof(Elf64_Rel));
                 for (size_t j = 0; j < rel_size / sizeof(Elf64_Rel); j++) {
                     Elf64_Rel *r = &rel[j];
                     void *addr = (char *)obj.base + r->r_offset;
@@ -277,26 +285,21 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                     }
                 }
             }
-            for (size_t j = 0; j < jmprel_size / sizeof(Elf64_Rela); j++) {
-                Elf64_Rela *r = &jmprel[j];
-                void *addr = (char *)obj.base + r->r_offset;
-                Elf64_Xword type = ELF64_R_TYPE(r->r_info);
-                Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-                if (type == R_AARCH64_JUMP_SLOT) {
-                    Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                    const char *sym_name = (char *)(strtab + symbol->st_name);
-                    *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+            if (jmprel && jmprel_size > 0) {
+                for (size_t j = 0; j < jmprel_size / sizeof(Elf64_Rela); j++) {
+                    Elf64_Rela *r = &jmprel[j];
+                    void *addr = (char *)obj.base + r->r_offset;
+                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+                    if (type == R_AARCH64_JUMP_SLOT) {
+                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
+                        const char *sym_name = (char *)(strtab + symbol->st_name);
+                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
+                    }
                 }
             }
             free(handles);
             dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
-            Elf64_Addr init_func = 0;
-            Elf64_Addr *init_array = NULL;
-            size_t init_array_size = 0;
-            Elf64_Addr fini_func = 0;
-            Elf64_Addr *fini_array = NULL;
-            size_t fini_array_size = 0;
-            Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
             while (dyn->d_tag != DT_NULL) {
                 if (dyn->d_tag == DT_INIT) {
                     init_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
