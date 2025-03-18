@@ -262,9 +262,9 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
         LOGI("Setting TLS block");
         asm volatile("msr tpidr_el0, %0" : : "r"(obj.tls_block));
     }
-    LOGI("Jumping to entry point: %p", (void *)((char *)obj.base + obj.ehdr->e_entry));
-    void (*entry)() = (void (*)())((char *)obj.base + obj.ehdr->e_entry);
-    entry();
+    void* epoint = (void *)((char *)obj.base + obj.ehdr->e_entry);
+    LOGI("Jumping to entry point: %p", epoint);
+    ((void (*)())((char *)epoint))();
     LOGI("Called entry point");
     return obj;
 }
