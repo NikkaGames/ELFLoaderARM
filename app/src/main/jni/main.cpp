@@ -247,9 +247,13 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
             }
             free(handles);
             dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
+            Elf64_Addr init_func = 0;
             Elf64_Addr *init_array = NULL;
             size_t init_array_size = 0;
             while (dyn->d_tag != DT_NULL) {
+                if (dyn->d_tag == DT_INIT) {
+                    init_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
+                }
                 if (dyn->d_tag == DT_INIT_ARRAY) {
                     init_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
                 }
@@ -257,6 +261,10 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
                     init_array_size = dyn->d_un.d_val;
                 }
                 dyn++;
+            }
+            if (init_func) {
+                LOGI("Calling DT_INIT at %p", (void *)init_func);
+                ((void (*)())init_func)();
             }
             if (init_array && init_array_size > 0) {
                 size_t count = init_array_size / sizeof(Elf64_Addr);
