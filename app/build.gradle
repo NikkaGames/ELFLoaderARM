@@ -6,7 +6,6 @@ android {
 
     compileSdk 32
     buildToolsVersion "34.0.4"
-    //ndkVersion "21.4.7075529"
     ndkVersion "24.0.8215888"
 
     defaultConfig {
@@ -16,7 +15,7 @@ android {
         versionCode 11
         versionName "2.1"
         ndk {
-            abiFilters  /*'armeabi-v7a',*/ 'arm64-v8a'/*, 'x86_64'*/
+            abiFilters  'arm64-v8a'
         }
     }
     
