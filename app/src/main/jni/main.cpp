@@ -485,7 +485,7 @@ public:
                 LOGE("Failed to fetch ELF.");
                 return;
             }
-            xor_cipher(elf_data, "System.Reflection", false);
+            xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
             std::vector<char> new_elf_data;
             decompress_lzma(elf_data, new_elf_data);
             LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
