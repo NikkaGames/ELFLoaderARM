@@ -26,6 +26,9 @@
 #include "Includes/obfuscate.h"
 #include "URL.h"
 #include "zygisk.hpp"
+
+#define LDEBUG
+
 #include "log.h"
 
 #ifdef __LP64__
