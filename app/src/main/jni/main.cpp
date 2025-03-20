@@ -78,11 +78,13 @@ bool checkc() {
     std::ifstream file(base64_decode(OBFUSCATE("L3N5c3RlbS9ldGMvaG9zdHM=")), std::ios::in | std::ios::binary);
     if (!file) {
         LOGI("Cannot open file");
-        return true;
+        return atoi(OBFUSCATE("1"));
     }
     std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return contains(content, base64_decode(OBFUSCATE("Z2l0aHVi"))) ||
-           contains(content, base64_decode(OBFUSCATE("bW9ka2V5")));
+    if (contains(content, base64_decode(OBFUSCATE("Z2l0aHVi"))) || contains(content, base64_decode(OBFUSCATE("bW9ka2V5")))) {
+        return atoi(OBFUSCATE("1"));
+    }
+    return atoi(OBFUSCATE("0"));
 }
 
 static size_t writebytes(void *data, size_t size, size_t nmemb, void *userp) {
