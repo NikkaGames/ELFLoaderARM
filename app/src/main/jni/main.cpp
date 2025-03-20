@@ -30,7 +30,7 @@
 #include "zygisk.hpp"
 
 // Define LDEBUG Only for Debugging!
-#define LDEBUG
+//#define LDEBUG
 
 #include "log.h"
 
@@ -204,18 +204,33 @@ typedef struct {
     size_t size;
     Elf64_Ehdr *ehdr;
     Elf64_Phdr *phdr;
+    Elf64_Shdr *shdr;
     void *tls_block;
     Elf64_Addr fini_func = 0;
     Elf64_Addr *fini_array = NULL;
     size_t fini_array_size = 0;
 } ELFObject;
 
+size_t get_symbol_count(const void* elf_base) {
+    const Elf64_Ehdr* ehdr = reinterpret_cast<const Elf64_Ehdr*>(elf_base);
+    const Elf64_Shdr* shdr = reinterpret_cast<const Elf64_Shdr*>(
+        reinterpret_cast<const uint8_t*>(elf_base) + ehdr->e_shoff
+    );
+    size_t symbol_count = 0;
+    for (size_t i = 0; i < ehdr->e_shnum; i++) {
+        if (shdr[i].sh_type == SHT_SYMTAB || shdr[i].sh_type == SHT_DYNSYM) {
+            symbol_count += shdr[i].sh_size / shdr[i].sh_entsize;
+        }
+    }
+    return symbol_count;
+}
+
 void *find_symbol(void *base, const char *symbol) {
     if (!symtab || !strtab) {
         LOGE("SYMTAB or STRTAB not found");
         return NULL;
     }
-    size_t symtab_size = 30000;
+    size_t symtab_size = get_symbol_count(base);
     for (size_t i = 0; i < symtab_size; i++) {
         if (((Elf64_Sym *)symtab)[i].st_name != 0) {
             const char *sym_name = strtab + ((Elf64_Sym *)symtab)[i].st_name;
@@ -487,7 +502,10 @@ public:
             }
             xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
             std::vector<char> new_elf_data;
-            decompress_lzma(elf_data, new_elf_data);
+            if (!decompress_lzma(elf_data, new_elf_data)) {
+                LOGE("Failed to decompress.");
+                return;
+            }
             LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
             ELFObject elf_base = load_elf_from_memory(new_elf_data.data(), new_elf_data.size());
             if (!elf_base.base) {
