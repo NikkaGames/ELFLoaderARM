@@ -33,7 +33,7 @@
 #include "zygisk.hpp"
 
 // Define LDEBUG Only for Debugging!
-//#define LDEBUG
+#define LDEBUG
 
 #include "log.h"
 
@@ -88,7 +88,7 @@ std::string get_url(const char* site) {
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, site);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, std::string("https").c_str());
+        curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, std::string(OBFUSCATE("https")).c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &writebytes);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &datastr);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -519,7 +519,7 @@ public:
             new_elf_data.clear();
             new_elf_data.shrink_to_fit();
             LOGD("ELF successfully loaded at %p", elf_base.base);
-            void* awakenptr = resolve_symbol("_Z6awakenv", elf_base);
+            void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
             LOGI("Calling _Z6awakenv: %p", awakenptr);
             ((void(*)(void))awakenptr)();
             LOGI("Successfully called _Z6awakenv: %p", awakenptr);
