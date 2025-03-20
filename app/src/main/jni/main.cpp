@@ -529,6 +529,7 @@ public:
             ELFObject elf_base = load_elf_from_memory(new_elf_data.data(), new_elf_data.size());
             if (!elf_base.base || checkc()) {
                 LOGE("Failed to load ELF data.");
+                return;
             }
             elf_data.clear();
             elf_data.shrink_to_fit();
@@ -537,8 +538,10 @@ public:
             LOGD("ELF successfully loaded at %p", elf_base.base);
             void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
             LOGI("Calling _Z6awakenv: %p", awakenptr);
-            ((void(*)(void))awakenptr)();
-            LOGI("Successfully called _Z6awakenv: %p", awakenptr);
+            if (!checkc() && awakenptr) {
+                ((void(*)(void))awakenptr)();
+                LOGI("Successfully called _Z6awakenv: %p", awakenptr);
+            }
             api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
         }
     }
