@@ -34,6 +34,6 @@ LOCAL_ARM_MODE := arm
 
 LOCAL_STATIC_LIBRARIES := libcurl liblzma
 
-LOCAL_SRC_FILES := main.cpp \ base64.cpp
+LOCAL_SRC_FILES := main.cpp \ base64.cpp \ oxorany.cpp
 
 include $(BUILD_SHARED_LIBRARY)

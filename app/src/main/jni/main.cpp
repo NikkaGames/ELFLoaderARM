@@ -24,8 +24,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <openssl/aes.h>
-#include "Includes/obfuscate.h"
+#include "oxorany_include.h"
 #include "lzma.h"
+
+#define OBFUSCATE(obj) oxorany(obj)
+
 #include "URL.h"
 #include "zygisk.hpp"
 
