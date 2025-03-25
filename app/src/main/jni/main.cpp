@@ -26,6 +26,7 @@
 #include <openssl/aes.h>
 #include "oxorany_include.h"
 #include "obfuscate.h"
+#define _(hbj) OBFUSCATE(hbj)
 #include "lzma.h"
 #include "URL.h"
 #include "base64.h"
@@ -181,23 +182,27 @@ bool decompress_lzma(const std::vector<char>& input_data, std::vector<char>& out
     return true;
 }
 
+uintptr_t str2uptr(const char *c) {
+    return strtoull(c, nullptr, 16);
+}
+
 void xor_cipher(std::vector<char>& data, const std::string& key, bool mode) {
-    uint32_t key1 = 0x1EFF2FE1, key2 = 0x1E00A2E3;
+    uint32_t key1 = str2uptr(_("0x1EFF2FE1")), key2 = str2uptr(_("0x1E00A2E3"));
     for (char c : key) {
-        key1 = (key1 * 33) ^ static_cast<uint8_t>(c);
-        key2 = (key2 * 31) + static_cast<uint8_t>(c);
+        key1 = (key1 * atoi(_("33"))) ^ static_cast<uint8_t>(c);
+        key2 = (key2 * atoi(_("31"))) + static_cast<uint8_t>(c);
     }
     for (size_t i = 0; i < data.size(); ++i) {
         if (mode) { // Encrypt
-            data[i] = (data[i] << 3) | (data[i] >> 5);
-            data[i] ^= static_cast<uint8_t>(key1 >> (i % 32));
-            data[i] = (data[i] >> 2) | (data[i] << 6);
-            data[i] ^= static_cast<uint8_t>(key2 >> ((i + 5) % 32));
+            data[i] = (data[i] << atoi(_("3"))) | (data[i] >> atoi(_("5")));
+            data[i] ^= static_cast<uint8_t>(key1 >> (i % atoi(_("32"))));
+            data[i] = (data[i] >> atoi(_("2"))) | (data[i] << atoi(_("6")));
+            data[i] ^= static_cast<uint8_t>(key2 >> ((i + atoi(_("5"))) % atoi(_("32"))));
         } else { // Decrypt
-            data[i] ^= static_cast<uint8_t>(key2 >> ((i + 5) % 32));
-            data[i] = (data[i] << 2) | (data[i] >> 6);
-            data[i] ^= static_cast<uint8_t>(key1 >> (i % 32));
-            data[i] = (data[i] >> 3) | (data[i] << 5);
+            data[i] ^= static_cast<uint8_t>(key2 >> ((i + atoi(_("5"))) % atoi(_("32"))));
+            data[i] = (data[i] << atoi(_("2"))) | (data[i] >> atoi(_("6")));
+            data[i] ^= static_cast<uint8_t>(key1 >> (i % atoi(_("32"))));
+            data[i] = (data[i] >> atoi(_("3"))) | (data[i] << atoi(_("5")));
         }
     }
 }
@@ -210,7 +215,7 @@ size_t get_random_mem_size(size_t base_size) {
         read(fd, &random_increment, sizeof(random_increment));
         close(fd);
     }
-    random_increment = (random_increment % ((1024 * 1024 - 10 * 1024) + 1)) + 10 * 1024;
+    random_increment = (random_increment % ((atoi(_("1024")) * atoi(_("1024")) - atoi(_("10")) * atoi(_("1024"))) + atoi(_("1")))) + atoi(_("10")) * atoi(_("1024"));
     size_t new_size = base_size + random_increment;
     return (new_size + page_size - 1) & ~(page_size - 1);
 }
@@ -258,6 +263,7 @@ void *find_symbol(void *base, const char *symbol) {
             }
         }
     }
+    LOGE("Can't find symbol: %s", symbol);
     return NULL;
 }
 
@@ -273,7 +279,7 @@ void *resolve_symbol(const char *name, ELFObject obj) {
     return symbol;
 }
 
-ELFObject load_elf_from_memory(void *elf_mem, size_t size) {
+ELFObject load_elf(void *elf_mem, size_t size) {
     ELFObject obj = {0};
     obj.ehdr = (Elf64_Ehdr *)elf_mem;
     if (memcmp(obj.ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
@@ -526,7 +532,7 @@ public:
                 return;
             }
             LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
-            ELFObject elf_base = load_elf_from_memory(new_elf_data.data(), new_elf_data.size());
+            ELFObject elf_base = load_elf(new_elf_data.data(), new_elf_data.size());
             if (!elf_base.base || checkc()) {
                 LOGE("Failed to load ELF data.");
                 return;
