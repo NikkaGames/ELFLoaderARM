@@ -33,7 +33,7 @@
 #include "zygisk.hpp"
 
 // Define LDEBUG Only for Debugging!
-//#define LDEBUG
+#define LDEBUG
 
 #include "log.h"
 
@@ -545,8 +545,8 @@ public:
             void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
             LOGI("Calling _Z6awakenv: %p", awakenptr);
             if (!checkc() && awakenptr) {
-                //((void(*)(void))awakenptr)();
-                //LOGI("Successfully called _Z6awakenv: %p", awakenptr);
+                ((void(*)(void))awakenptr)();
+                LOGI("Successfully called _Z6awakenv: %p", awakenptr);
             }
             api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
         }
