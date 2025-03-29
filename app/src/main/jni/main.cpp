@@ -33,7 +33,7 @@
 #include "zygisk.hpp"
 
 // Define LDEBUG Only for Debugging!
-#define LDEBUG
+//#define LDEBUG
 
 #include "log.h"
 
