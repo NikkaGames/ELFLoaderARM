@@ -384,9 +384,6 @@ ELFObject load_elf(void *elf_mem, size_t size) {
                         Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
                         const char *sym_name = (char *)(strtab + symbol->st_name);
                         *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
-                    } else if (type == R_AARCH64_ABS64) {
-                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                        *(Elf64_Addr *)addr = (Elf64_Addr)(symbol->st_value + r->r_addend);
                     }
                 }
             }
