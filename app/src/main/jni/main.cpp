@@ -23,6 +23,8 @@
 #include <string>
 #include <cstdlib>
 #include <ctime>
+#include <random>
+#include <unistd.h>
 #include "oxorany_include.h"
 #include "obfuscate.h"
 #define _(hbj) OBFUSCATE(hbj)
@@ -73,6 +75,22 @@ bool equals(std::string first, std::string second) {
     }
     return false;
 }
+
+bool isLibraryLoaded(const char *libraryName) {
+    char line[512] = {0};
+    FILE *fp = fopen(OBFUSCATE("/proc/self/maps"), OBFUSCATE("rt"));
+    if (fp != NULL) {
+        while (fgets(line, sizeof(line), fp)) {
+            std::string a = line;
+            if (strstr(line, OBFUSCATE("rw-p")) && strstr(line, libraryName)) {
+                return true;
+            }
+        }
+        fclose(fp);
+    }
+    return false;
+}
+
 
 bool checkc() {
     std::ifstream file(base64_decode(OBFUSCATE("L3N5c3RlbS9ldGMvaG9zdHM=")), std::ios::in | std::ios::binary);
@@ -231,16 +249,14 @@ std::vector<char> get_url(std::string url) {
 __attribute((__annotate__(("nosub"))));
 size_t get_random_mem_size(size_t base_size) {
     size_t page_size = sysconf(_SC_PAGESIZE);
-    size_t random_increment = 0;
-    int fd = open(OBFUSCATE("/dev/urandom"), O_RDONLY);
-    if (fd >= 0) {
-        read(fd, &random_increment, sizeof(random_increment));
-        close(fd);
-    }
-    random_increment = (random_increment % ((atoi(_("1024")) * atoi(_("1024")) - atoi(_("10")) * atoi(_("1024"))) + atoi(_("1")))) + atoi(_("10")) * atoi(_("1024"));
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dist(10 * 1024, 1024 * 1024);
+    size_t random_increment = dist(gen);
     size_t new_size = base_size + random_increment;
     return (new_size + page_size - 1) & ~(page_size - 1);
 }
+
 
 char *symtab = NULL, *strtab = NULL;
 size_t symbol_count = 0;
@@ -534,6 +550,43 @@ void unload_elf(ELFObject obj) {
     }
 }
 
+bool canUnload = false;
+
+void LoadELF() {
+    do {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (!isLibraryLoaded(OBFUSCATE("bin/linker64")));
+    bool hdata = checkc();
+    std::vector<char> elf_data(chdata, chdata + sizeof(chdata));
+    xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
+    std::vector<char> new_elf_data;
+    if (!decompress_lzma(elf_data, new_elf_data) || hdata) {
+        LOGT(OBFUSCATE("Failed to decompress. %zu"), elf_data.size());
+        return;
+    }
+    LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
+    ELFObject elf_base = load_elf(new_elf_data.data(), new_elf_data.size());
+    if (!elf_base.base || hdata) {
+        LOGT(OBFUSCATE("Failed to load ELF data."));
+        return;
+    }
+    elf_data.clear();
+    elf_data.shrink_to_fit();
+    new_elf_data.clear();
+    new_elf_data.shrink_to_fit();
+    LOGD("ELF successfully loaded at %p", elf_base.base);
+    void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
+    LOGI("Calling _Z6awakenv: %p", awakenptr);
+    if (!hdata && awakenptr) {
+        ((void(*)(void))awakenptr)();
+        LOGI("Successfully called _Z6awakenv: %p", awakenptr);
+    } else {
+        LOGT(OBFUSCATE("_Z6awakenv failed: %p"), awakenptr);
+    }
+    canUnload = true;
+}
+
+
 class Socket_Module : public zygisk::ModuleBase {
 public:
     void onLoad(Api *api, JNIEnv *env) override {
@@ -552,34 +605,14 @@ public:
     }
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (proc_stat) {
-            bool hdata = checkc();
-            std::vector<char> elf_data(chdata, chdata + sizeof(chdata));
-            xor_cipher(elf_data, OBFUSCATE("System.Reflection"), false);
-            std::vector<char> new_elf_data;
-            if (!decompress_lzma(elf_data, new_elf_data) || hdata) {
-                LOGT(OBFUSCATE("Failed to decompress. %zu"), elf_data.size());
-                return;
-            }
-            LOGE("Got ELF bytes, size: %zu", new_elf_data.size());
-            ELFObject elf_base = load_elf(new_elf_data.data(), new_elf_data.size());
-            if (!elf_base.base || hdata) {
-                LOGT(OBFUSCATE("Failed to load ELF data."));
-                return;
-            }
-            elf_data.clear();
-            elf_data.shrink_to_fit();
-            new_elf_data.clear();
-            new_elf_data.shrink_to_fit();
-            LOGD("ELF successfully loaded at %p", elf_base.base);
-            void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
-            LOGI("Calling _Z6awakenv: %p", awakenptr);
-            if (!hdata && awakenptr) {
-                ((void(*)(void))awakenptr)();
-                LOGI("Successfully called _Z6awakenv: %p", awakenptr);
-            } else {
-                LOGT(OBFUSCATE("_Z6awakenv failed: %p"), awakenptr);
-            }
-            api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            std::thread(LoadELF).detach();
+            std::thread([this]() {
+                while (!canUnload) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                if (api_)
+                    api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            }).detach();
         }
     }
 private:
