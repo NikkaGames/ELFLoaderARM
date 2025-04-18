@@ -513,7 +513,13 @@ ELFObject load_elf(void *elf_mem, size_t size) {
     }
     if (obj.tls_block) {
         LOGI("Setting TLS block");
+#if defined(__aarch64__)
         asm volatile("msr tpidr_el0, %0" : : "r"(obj.tls_block));
+#elif defined(__x86_64__)
+        asm volatile("movq %0, %%fs:0" : : "r"(obj.tls_block));
+#else
+#warning "TLS setting not implemented for this architecture"
+#endif
     }
     void* epoint = (void *)((char *)obj.base + obj.ehdr->e_entry);
     register void *sp asm("sp");
