@@ -62,14 +62,14 @@ using zygisk::ServerSpecializeArgs;
 
 bool proc_stat = false;
 
-bool contains(std::string in, std::string target) {
-    if(strstr(in.c_str(), target.c_str())) {
+bool contains(const std::string& in, const std::string& target) {
+    if (strstr(in.c_str(), target.c_str())) {
         return true;
     }
     return false;
 }
 
-bool equals(std::string first, std::string second) {
+bool equals(const std::string& first, const std::string& second) {
     if (first == second) {
         return true;
     }
@@ -79,7 +79,7 @@ bool equals(std::string first, std::string second) {
 bool isLibraryLoaded(const char *libraryName) {
     char line[512] = {0};
     FILE *fp = fopen(OBFUSCATE("/proc/self/maps"), OBFUSCATE("rt"));
-    if (fp != NULL) {
+    if (fp != nullptr) {
         while (fgets(line, sizeof(line), fp)) {
             std::string a = line;
             if (strstr(line, OBFUSCATE("rw-p")) && strstr(line, libraryName)) {
@@ -258,7 +258,7 @@ size_t get_random_mem_size(size_t base_size) {
 }
 
 
-char *symtab = NULL, *strtab = NULL;
+char *symtab = nullptr, *strtab = nullptr;
 size_t symbol_count = 0;
 
 typedef struct {
@@ -269,14 +269,14 @@ typedef struct {
     Elf64_Shdr *shdr;
     void *tls_block;
     Elf64_Addr fini_func = 0;
-    Elf64_Addr *fini_array = NULL;
+    Elf64_Addr *fini_array = nullptr;
     size_t fini_array_size = 0;
 } ELFObject;
 
 __attribute((__annotate__(("nosub"))));
 size_t get_symbol_count(const void* elf_base) {
-    const Elf64_Ehdr* ehdr = reinterpret_cast<const Elf64_Ehdr*>(elf_base);
-    const Elf64_Shdr* shdr = reinterpret_cast<const Elf64_Shdr*>(
+    const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(elf_base);
+    const auto* shdr = reinterpret_cast<const Elf64_Shdr*>(
         reinterpret_cast<const uint8_t*>(elf_base) + ehdr->e_shoff
     );
     for (size_t i = 0; i < ehdr->e_shnum; i++) {
@@ -291,7 +291,7 @@ __attribute((__annotate__(("nosub"))));
 void *find_symbol(void *base, const char *symbol) {
     if (!symtab || !strtab) {
         LOGE("SYMTAB or STRTAB not found");
-        return NULL;
+        return nullptr;
     }
     size_t symtab_size = symbol_count;
     for (size_t i = 0; i < symtab_size; i++) {
@@ -309,9 +309,9 @@ void *find_symbol(void *base, const char *symbol) {
 
 __attribute((__annotate__(("nosub"))));
 void *resolve_symbol(const char *name, ELFObject obj) {
-    void *handle = dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
+    void *handle = dlopen(nullptr, RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) {
-        return NULL;
+        return nullptr;
     }
     void *symbol = dlsym(handle, name);
     if (!symbol) {
@@ -325,7 +325,7 @@ ELFObject load_elf(void *elf_mem, size_t size) {
 #ifdef p_type
 #undef p_type
 #endif
-    ELFObject obj = {0};
+    ELFObject obj = {nullptr};
     obj.ehdr = (Elf64_Ehdr *)elf_mem;
     if (memcmp(obj.ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
         LOGE("Invalid ELF");
@@ -340,7 +340,7 @@ ELFObject load_elf(void *elf_mem, size_t size) {
         }
     }
     mem_size = get_random_mem_size(mem_size);
-    obj.base = mmap(NULL, mem_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    obj.base = mmap(nullptr, mem_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (obj.base == MAP_FAILED) {
         LOGE("Memory allocation failed");
     }
@@ -349,7 +349,7 @@ ELFObject load_elf(void *elf_mem, size_t size) {
         if (obj.phdr[i].p_type == PT_LOAD) {
             memcpy((char *)obj.base + obj.phdr[i].p_vaddr, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
         } else if (obj.phdr[i].p_type == PT_TLS) {
-            obj.tls_block = mmap(NULL, obj.phdr[i].p_memsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            obj.tls_block = mmap(nullptr, obj.phdr[i].p_memsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             memcpy((char *)obj.tls_block, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
         }
     }
@@ -357,21 +357,21 @@ ELFObject load_elf(void *elf_mem, size_t size) {
     LOGD("Loaded ELF sections into memory, SHNUM: %zu", symbol_count);
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
         if (obj.phdr[i].p_type == PT_DYNAMIC) {
-            Elf64_Dyn *dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
-            Elf64_Addr *preinit_array = NULL;
+            auto *dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
+            Elf64_Addr *preinit_array = nullptr;
             size_t preinit_array_size = 0;
-            Elf64_Rel *rel = NULL;
+            Elf64_Rel *rel = nullptr;
             size_t rel_size = 0;
-            Elf64_Rela *rela = NULL, *jmprel = NULL;
+            Elf64_Rela *rela = nullptr, *jmprel = nullptr;
             size_t rela_size = 0, jmprel_size = 0;
             Elf64_Addr init_func = 0;
-            Elf64_Addr *init_array = NULL;
+            Elf64_Addr *init_array = nullptr;
             size_t init_array_size = 0;
             Elf64_Addr fini_func = 0;
-            Elf64_Addr *fini_array = NULL;
+            Elf64_Addr *fini_array = nullptr;
             size_t fini_array_size = 0;
             Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
-            char **needed_libs = NULL;
+            char **needed_libs = nullptr;
             int needed_count = 0;
             while (dyn->d_tag != DT_NULL) {
                 if (dyn->d_tag == DT_PREINIT_ARRAY) preinit_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
@@ -558,7 +558,7 @@ void unload_elf(ELFObject obj) {
 
 bool canUnload = false;
 
-void LoadELF() {
+void load_elf_thread() {
     do {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     } while (!isLibraryLoaded(OBFUSCATE("bin/linker64")));
@@ -584,7 +584,7 @@ void LoadELF() {
     void* awakenptr = resolve_symbol(OBFUSCATE("_Z6awakenv"), elf_base);
     LOGI("Calling _Z6awakenv: %p", awakenptr);
     if (!hdata && awakenptr) {
-        ((void(*)(void))awakenptr)();
+        ((void(*)())awakenptr)();
         LOGI("Successfully called _Z6awakenv: %p", awakenptr);
     } else {
         LOGT(OBFUSCATE("_Z6awakenv failed: %p"), awakenptr);
@@ -611,7 +611,7 @@ public:
     }
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (proc_stat) {
-            std::thread(LoadELF).detach();
+            std::thread(load_elf_thread).detach();
             std::thread([this]() {
                 while (!canUnload) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
