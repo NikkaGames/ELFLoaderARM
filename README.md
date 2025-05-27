@@ -60,6 +60,10 @@
 - CMake + Ninja
 - Zygisk module boilerplate
 
+### ELF Bytes
+
+to integrate your elf binary in loader, use this [file to bytes converter](https://tomeko.net/online_tools/file_to_hex.php?lang=en) to get bytes of your binary and then put the bytes as char array in [data.h](https://github.com/NikkaGames/ELFLoaderARM/blob/main/app/src/main/jni/data.h)
+
 ### Building
 
 Android Studio with r24 ndk
