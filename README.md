@@ -62,7 +62,7 @@
 
 ### ELF Bytes
 
-to integrate your elf binary in loader, use this [file to bytes converter](https://tomeko.net/online_tools/file_to_hex.php?lang=en) to get bytes of your binary and then put the bytes as char array in [data.h](https://github.com/NikkaGames/ELFLoaderARM/blob/main/app/src/main/jni/data.h)
+to integrate your elf binary in loader, encrypt the elf binary with [FileCompressor](https://github.com/NikkaGames/FileCompressor), then use this [file to bytes converter](https://tomeko.net/online_tools/file_to_hex.php?lang=en) to get bytes of your encrypted binary and put the bytes as `chdata` char array in [data.h](https://github.com/NikkaGames/ELFLoaderARM/blob/main/app/src/main/jni/data.h)
 
 ### Building
 
