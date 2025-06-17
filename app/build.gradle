@@ -6,7 +6,7 @@ android {
 
     namespace 'zygisk.nikkagames.imgui'
     compileSdk 35
-    ndkVersion "24.0.8215889"
+    ndkVersion "24.0.8215888"
 
     defaultConfig {
         applicationId "zygisk.nikkagames.imgui"
