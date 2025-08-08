@@ -19,11 +19,11 @@
 
 ## Features
 
-- 🔐 **Security**: Anti-reversing measures, obfuscated strings/paths, memory layout randomization.
-- ⚙️ **Dynamic ELF Support**: Manual parsing of ELF headers, relocation resolution, TLS segment setup.
-- 🚀 **Performance**: Fast execution with minimal overhead, threaded network operations.
-- 📦 **Integration**: Embedded as part of a Zygisk module, executed during the app specialization phase.
-- 🌐 **JNI/Java Interop**: Safe JNI attachment with obfuscated network access via `HttpURLConnection`.
+- **Security**: Anti-reversing measures, obfuscated strings/paths, memory layout randomization.
+- **Dynamic ELF Support**: Manual parsing of ELF headers, relocation resolution, TLS segment setup.
+- **Performance**: Fast execution with minimal overhead, threaded network operations.
+- **Integration**: Embedded as part of a Zygisk module, executed during the app specialization phase.
+- **JNI/Java Interop**: Safe JNI attachment with obfuscated network access via `HttpURLConnection`.
 
 ## Loader Lifecycle
 
