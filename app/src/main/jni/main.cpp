@@ -309,13 +309,12 @@ void *find_symbol(void *base, const char *symbol) {
 
 __attribute((__annotate__(("nosub"))));
 void *resolve_symbol(const char *name, ELFObject obj) {
-    void *handle = dlopen(nullptr, RTLD_LAZY | RTLD_GLOBAL);
-    if (!handle) {
-        return nullptr;
-    }
-    void *symbol = dlsym(handle, name);
+	void *symbol = find_symbol(obj.base, name);
     if (!symbol) {
-        symbol = find_symbol(obj.base, name);
+		void *handle = dlopen(nullptr, RTLD_LAZY | RTLD_GLOBAL);
+		if (!handle) return nullptr;
+        symbol = dlsym(handle, name);
+		if (!symbol) return nullptr;
     }
     return symbol;
 }
