@@ -273,53 +273,41 @@ typedef struct {
     size_t fini_array_size = 0;
 } ELFObject;
 
-__attribute((__annotate__(("nosub"))));
-size_t get_symbol_count(const void* elf_base) {
-    const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(elf_base);
-    const auto* shdr = reinterpret_cast<const Elf64_Shdr*>(
-        reinterpret_cast<const uint8_t*>(elf_base) + ehdr->e_shoff
-    );
+size_t get_symbol_count(const void *elf_base) {
+    symbol_count = 0;
+    const auto *ehdr = (const Elf64_Ehdr *)elf_base;
+    const auto *shdr = (const Elf64_Shdr *)((const uint8_t *)elf_base + ehdr->e_shoff);
     for (size_t i = 0; i < ehdr->e_shnum; i++) {
-        if (shdr[i].sh_type == SHT_SYMTAB || shdr[i].sh_type == SHT_DYNSYM) {
-            symbol_count += shdr[i].sh_size / shdr[i].sh_entsize;
+        if (shdr[i].sh_type == SHT_DYNSYM && shdr[i].sh_entsize) {
+            symbol_count = shdr[i].sh_size / shdr[i].sh_entsize;
+            break;
         }
     }
     return symbol_count;
 }
 
-__attribute((__annotate__(("nosub"))));
 void *find_symbol(void *base, const char *symbol) {
-    if (!symtab || !strtab) {
-        LOGE("SYMTAB or STRTAB not found");
-        return nullptr;
-    }
-    size_t symtab_size = symbol_count;
-    for (size_t i = 0; i < symtab_size; i++) {
-        if (((Elf64_Sym *)symtab)[i].st_name != 0) {
-            const char *sym_name = strtab + ((Elf64_Sym *)symtab)[i].st_name;
-            if (strcmp(sym_name, symbol) == 0) {
-                //LOGD("Found symbol: %s at address: 0x%lx", symbol, ((Elf64_Sym *)symtab)[i].st_value);
-                return (void *)((char *)base + ((Elf64_Sym *)symtab)[i].st_value);
-            }
+    if (!symtab || !strtab || symbol_count == 0) return nullptr;
+    auto *syms = (Elf64_Sym *)symtab;
+    for (size_t i = 0; i < symbol_count; i++) {
+        Elf64_Sym *s = &syms[i];
+        if (s->st_name == 0) continue;
+        if (s->st_shndx == SHN_UNDEF) continue;
+        if (s->st_value == 0) continue;
+        const char *sym_name = strtab + s->st_name;
+        if (strcmp(sym_name, symbol) == 0) {
+            return (void *)((char *)base + s->st_value);
         }
     }
-    LOGE("Can't find symbol: %s", symbol);
-    return NULL;
+    return nullptr;
 }
 
-__attribute((__annotate__(("nosub"))));
 void *resolve_symbol(const char *name, ELFObject obj) {
-	void *symbol = find_symbol(obj.base, name);
-    if (!symbol) {
-		void *handle = dlopen(nullptr, RTLD_LAZY | RTLD_GLOBAL);
-		if (!handle) return nullptr;
-        symbol = dlsym(handle, name);
-		if (!symbol) return nullptr;
-    }
-    return symbol;
+    void *p = find_symbol(obj.base, name);
+    if (p) return p;
+    return dlsym(RTLD_DEFAULT, name);
 }
 
-__attribute((__annotate__(("nosub"))));
 ELFObject load_elf(void *elf_mem, size_t size) {
 #ifdef p_type
 #undef p_type
@@ -328,6 +316,7 @@ ELFObject load_elf(void *elf_mem, size_t size) {
     obj.ehdr = (Elf64_Ehdr *)elf_mem;
     if (memcmp(obj.ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
         LOGE("Invalid ELF");
+        return obj;
     }
     obj.phdr = (Elf64_Phdr *)((char *)obj.ehdr + obj.ehdr->e_phoff);
     LOGI("ELF program headers loaded, count: %d", obj.ehdr->e_phnum);
@@ -342,173 +331,189 @@ ELFObject load_elf(void *elf_mem, size_t size) {
     obj.base = mmap(nullptr, mem_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (obj.base == MAP_FAILED) {
         LOGE("Memory allocation failed");
+        obj.base = nullptr;
+        return obj;
     }
     LOGI("Allocated memory at %p (size: %zu)", obj.base, mem_size);
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
         if (obj.phdr[i].p_type == PT_LOAD) {
             memcpy((char *)obj.base + obj.phdr[i].p_vaddr, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
+            if (obj.phdr[i].p_memsz > obj.phdr[i].p_filesz) {
+                memset((char *)obj.base + obj.phdr[i].p_vaddr + obj.phdr[i].p_filesz, 0, obj.phdr[i].p_memsz - obj.phdr[i].p_filesz);
+            }
         } else if (obj.phdr[i].p_type == PT_TLS) {
             obj.tls_block = mmap(nullptr, obj.phdr[i].p_memsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            memcpy((char *)obj.tls_block, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
+            if (obj.tls_block != MAP_FAILED) {
+                memcpy((char *)obj.tls_block, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
+                if (obj.phdr[i].p_memsz > obj.phdr[i].p_filesz) {
+                    memset((char *)obj.tls_block + obj.phdr[i].p_filesz, 0, obj.phdr[i].p_memsz - obj.phdr[i].p_filesz);
+                }
+            } else {
+                obj.tls_block = nullptr;
+            }
         }
     }
     symbol_count = get_symbol_count(elf_mem);
-    LOGD("Loaded ELF sections into memory, SHNUM: %zu", symbol_count);
+    LOGD("Loaded DYNSYM count: %zu", symbol_count);
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
-        if (obj.phdr[i].p_type == PT_DYNAMIC) {
-            auto *dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
-            Elf64_Addr *preinit_array = nullptr;
-            size_t preinit_array_size = 0;
-            Elf64_Rel *rel = nullptr;
-            size_t rel_size = 0;
-            Elf64_Rela *rela = nullptr, *jmprel = nullptr;
-            size_t rela_size = 0, jmprel_size = 0;
-            Elf64_Addr init_func = 0;
-            Elf64_Addr *init_array = nullptr;
-            size_t init_array_size = 0;
-            Elf64_Addr fini_func = 0;
-            Elf64_Addr *fini_array = nullptr;
-            size_t fini_array_size = 0;
-            Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
-            char **needed_libs = nullptr;
-            int needed_count = 0;
-            while (dyn->d_tag != DT_NULL) {
-                if (dyn->d_tag == DT_PREINIT_ARRAY) preinit_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
-                if (dyn->d_tag == DT_PREINIT_ARRAYSZ) preinit_array_size = dyn->d_un.d_val;
-                if (dyn->d_tag == DT_REL) rel = (Elf64_Rel *)((char *)obj.base + dyn->d_un.d_ptr);
-                if (dyn->d_tag == DT_RELSZ) rel_size = dyn->d_un.d_val;
-                if (dyn->d_tag == DT_RELA) rela = (Elf64_Rela *)((char *)obj.base + dyn->d_un.d_ptr);
-                if (dyn->d_tag == DT_RELASZ) rela_size = dyn->d_un.d_val;
-                if (dyn->d_tag == DT_SYMTAB) symtab = (char *)obj.base + dyn->d_un.d_ptr;
-                if (dyn->d_tag == DT_STRTAB) strtab = (char *)obj.base + dyn->d_un.d_ptr;
-                if (dyn->d_tag == DT_JMPREL) jmprel = (Elf64_Rela *)((char *)obj.base + dyn->d_un.d_ptr);
-                if (dyn->d_tag == DT_PLTRELSZ) jmprel_size = dyn->d_un.d_val;
-                if (dyn->d_tag == DT_NEEDED) needed_count++;
-                dyn++;
-            }
-            LOGI("Found %d needed libraries", needed_count);
+        if (obj.phdr[i].p_type != PT_DYNAMIC) continue;
+        auto *dyn0 = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
+        auto *dyn = dyn0;
+        Elf64_Addr *preinit_array = nullptr;
+        size_t preinit_array_size = 0;
+        Elf64_Rel *rel = nullptr;
+        size_t rel_size = 0;
+        Elf64_Rela *rela = nullptr;
+        size_t rela_size = 0;
+        Elf64_Rela *jmprel = nullptr;
+        size_t jmprel_size = 0;
+        Elf64_Addr init_func = 0;
+        Elf64_Addr *init_array = nullptr;
+        size_t init_array_size = 0;
+        Elf64_Addr fini_func = 0;
+        Elf64_Addr *fini_array = nullptr;
+        size_t fini_array_size = 0;
+        Elf64_Xword dt_flags = 0, dt_flags_1 = 0;
+        int needed_count = 0;
+        while (dyn->d_tag != DT_NULL) {
+            if (dyn->d_tag == DT_PREINIT_ARRAY) preinit_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_PREINIT_ARRAYSZ) preinit_array_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_REL) rel = (Elf64_Rel *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_RELSZ) rel_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_RELA) rela = (Elf64_Rela *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_RELASZ) rela_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_SYMTAB) symtab = (char *)obj.base + dyn->d_un.d_ptr;
+            if (dyn->d_tag == DT_STRTAB) strtab = (char *)obj.base + dyn->d_un.d_ptr;
+            if (dyn->d_tag == DT_JMPREL) jmprel = (Elf64_Rela *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_PLTRELSZ) jmprel_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_NEEDED) needed_count++;
+            dyn++;
+        }
+        LOGI("Found %d needed libraries", needed_count);
+        char **needed_libs = nullptr;
+        if (needed_count > 0) {
             needed_libs = (char **)malloc(sizeof(char *) * needed_count);
-            int needed_index = 0;
-            dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
+            int idx = 0;
+            dyn = dyn0;
             while (dyn->d_tag != DT_NULL) {
                 if (dyn->d_tag == DT_NEEDED) {
-                    needed_libs[needed_index++] = (char *)(strtab + dyn->d_un.d_val);
+                    needed_libs[idx++] = (char *)(strtab + dyn->d_un.d_val);
                 }
                 dyn++;
             }
             void **handles = (void **)malloc(sizeof(void *) * needed_count);
             for (int j = 0; j < needed_count; j++) {
-                handles[j] = dlopen(needed_libs[j], RTLD_LAZY);
-                if (!handles[j]) {
-                    LOGE("Failed to load dependency: %s", needed_libs[j]);
-                } else {
-                    LOGI("Loaded dependency: %s", needed_libs[j]);
-                }
-            }
-            free(needed_libs);
-            if (preinit_array && preinit_array_size > 0) {
-                size_t count = preinit_array_size / sizeof(Elf64_Addr);
-                LOGI("Calling %zu pre-initialization functions from DT_PREINIT_ARRAY", count);
-                for (size_t j = 0; j < count; j++) {
-                    if (preinit_array[j]) {
-                        LOGI("Calling pre-initialization function at %p", (void *)preinit_array[j]);
-                        ((void (*)())preinit_array[j])();
-                    }
-                }
-            }
-            if (rela && rela_size > 0) {
-                for (size_t j = 0; j < rela_size / sizeof(Elf64_Rela); j++) {
-                    Elf64_Rela *r = &rela[j];
-                    void *addr = (char *)obj.base + r->r_offset;
-                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
-                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-                    if (type == R_AARCH64_RELATIVE) {
-                        *(Elf64_Addr *)addr = (Elf64_Addr)((char *)obj.base + r->r_addend);
-                    } else if (type == R_AARCH64_GLOB_DAT) {
-                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                        const char *sym_name = (char *)(strtab + symbol->st_name);
-                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
-                    }
-                }
-            }
-            if (rel && rel_size > 0) {
-                for (size_t j = 0; j < rel_size / sizeof(Elf64_Rel); j++) {
-                    Elf64_Rel *r = &rel[j];
-                    void *addr = (char *)obj.base + r->r_offset;
-                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
-                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-                    if (type == R_AARCH64_RELATIVE) {
-                        *(Elf64_Addr *)addr += (Elf64_Addr)((char *)obj.base);
-                    } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT) {
-                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                        const char *sym_name = (char *)(strtab + symbol->st_name);
-                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
-                    }
-
-                }
-            }
-            if (jmprel && jmprel_size > 0) {
-                for (size_t j = 0; j < jmprel_size / sizeof(Elf64_Rela); j++) {
-                    Elf64_Rela *r = &jmprel[j];
-                    void *addr = (char *)obj.base + r->r_offset;
-                    Elf64_Xword type = ELF64_R_TYPE(r->r_info);
-                    Elf64_Xword sym = ELF64_R_SYM(r->r_info);
-                    if (type == R_AARCH64_JUMP_SLOT) {
-                        Elf64_Sym *symbol = (Elf64_Sym *)symtab + sym;
-                        const char *sym_name = (char *)(strtab + symbol->st_name);
-                        *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(sym_name, obj);
-                    }
-                }
+                handles[j] = dlopen(needed_libs[j], RTLD_NOW | RTLD_GLOBAL);
+                if (!handles[j]) LOGE("Failed to load dependency: %s", needed_libs[j]);
+                else LOGI("Loaded dependency: %s", needed_libs[j]);
             }
             free(handles);
-            dyn = (Elf64_Dyn *)((char *)obj.base + obj.phdr[i].p_vaddr);
-            while (dyn->d_tag != DT_NULL) {
-                if (dyn->d_tag == DT_INIT) {
-                    init_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
-                }
-                if (dyn->d_tag == DT_INIT_ARRAY) {
-                    init_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
-                }
-                if (dyn->d_tag == DT_INIT_ARRAYSZ) {
-                    init_array_size = dyn->d_un.d_val;
-                }
-                if (dyn->d_tag == DT_FINI) {
-                    fini_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
-                }
-                if (dyn->d_tag == DT_FINI_ARRAY) {
-                    fini_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
-                }
-                if (dyn->d_tag == DT_FINI_ARRAYSZ) {
-                    fini_array_size = dyn->d_un.d_val;
-                }
-                if (dyn->d_tag == DT_FLAGS) {
-                    dt_flags = dyn->d_un.d_val;
-                    LOGI("DT_FLAGS: 0x%lx", dt_flags);
-                }
-                if (dyn->d_tag == DT_FLAGS_1) {
-                    dt_flags_1 = dyn->d_un.d_val;
-                    LOGI("DT_FLAGS_1: 0x%lx", dt_flags_1);
-                }
-                dyn++;
-            }
-            if (init_func) {
-                LOGI("Calling DT_INIT at %p", (void *)init_func);
-                ((void (*)())init_func)();
-            }
-            if (init_array && init_array_size > 0) {
-                size_t count = init_array_size / sizeof(Elf64_Addr);
-                LOGI("Calling %zu constructors from DT_INIT_ARRAY", count);
-                for (size_t j = 0; j < count; j++) {
-                    if (init_array[j]) {
-                        LOGI("Calling constructor at %p", (void *)init_array[j]);
-                        ((void (*)())init_array[j])();
-                    }
-                }
-            }
-            obj.fini_func = fini_func;
-            obj.fini_array = fini_array;
-            obj.fini_array_size = fini_array_size;
+            free(needed_libs);
         }
+        if (rela && rela_size > 0) {
+            size_t n = rela_size / sizeof(Elf64_Rela);
+            for (size_t j = 0; j < n; j++) {
+                Elf64_Rela *r = &rela[j];
+                void *addr = (char *)obj.base + r->r_offset;
+                Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+
+                if (type == R_AARCH64_RELATIVE) {
+                    *(Elf64_Addr *)addr = (Elf64_Addr)((char *)obj.base + r->r_addend);
+                } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT) {
+                    Elf64_Sym *s = (Elf64_Sym *)symtab + sym;
+                    const char *nm = (char *)(strtab + s->st_name);
+                    *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(nm, obj);
+                } else if (type == R_AARCH64_ABS64) {
+                    Elf64_Sym *s = (Elf64_Sym *)symtab + sym;
+                    const char *nm = (char *)(strtab + s->st_name);
+                    Elf64_Addr S = (Elf64_Addr)resolve_symbol(nm, obj);
+                    *(Elf64_Addr *)addr = S + (Elf64_Addr)r->r_addend;
+                } else if (type == R_AARCH64_IRELATIVE) {
+                    auto fn = (Elf64_Addr (*)())((char *)obj.base + r->r_addend);
+                    *(Elf64_Addr *)addr = (Elf64_Addr)fn();
+                }
+            }
+        }
+        if (rel && rel_size > 0) {
+            size_t n = rel_size / sizeof(Elf64_Rel);
+            for (size_t j = 0; j < n; j++) {
+                Elf64_Rel *r = &rel[j];
+                void *addr = (char *)obj.base + r->r_offset;
+                Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+                if (type == R_AARCH64_RELATIVE) {
+                    *(Elf64_Addr *)addr += (Elf64_Addr)obj.base;
+                } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT) {
+                    Elf64_Sym *s = (Elf64_Sym *)symtab + sym;
+                    const char *nm = (char *)(strtab + s->st_name);
+                    *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(nm, obj);
+                } else if (type == R_AARCH64_ABS64) {
+                    Elf64_Sym *s = (Elf64_Sym *)symtab + sym;
+                    const char *nm = (char *)(strtab + s->st_name);
+                    Elf64_Addr S = (Elf64_Addr)resolve_symbol(nm, obj);
+                    Elf64_Addr A = *(Elf64_Addr *)addr;
+                    *(Elf64_Addr *)addr = S + A;
+                } else if (type == R_AARCH64_IRELATIVE) {
+                    Elf64_Addr A = *(Elf64_Addr *)addr;
+                    auto fn = (Elf64_Addr (*)())((char *)obj.base + A);
+                    *(Elf64_Addr *)addr = (Elf64_Addr)fn();
+                }
+            }
+        }
+        if (jmprel && jmprel_size > 0) {
+            size_t n = jmprel_size / sizeof(Elf64_Rela);
+            for (size_t j = 0; j < n; j++) {
+                Elf64_Rela *r = &jmprel[j];
+                void *addr = (char *)obj.base + r->r_offset;
+                Elf64_Xword type = ELF64_R_TYPE(r->r_info);
+                Elf64_Xword sym = ELF64_R_SYM(r->r_info);
+                if (type == R_AARCH64_JUMP_SLOT) {
+                    Elf64_Sym *s = (Elf64_Sym *)symtab + sym;
+                    const char *nm = (char *)(strtab + s->st_name);
+                    *(Elf64_Addr *)addr = (Elf64_Addr)resolve_symbol(nm, obj);
+                }
+            }
+        }
+        dyn = dyn0;
+        while (dyn->d_tag != DT_NULL) {
+            if (dyn->d_tag == DT_INIT) init_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_INIT_ARRAY) init_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_INIT_ARRAYSZ) init_array_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_FINI) fini_func = (Elf64_Addr)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_FINI_ARRAY) fini_array = (Elf64_Addr *)((char *)obj.base + dyn->d_un.d_ptr);
+            if (dyn->d_tag == DT_FINI_ARRAYSZ) fini_array_size = dyn->d_un.d_val;
+            if (dyn->d_tag == DT_FLAGS) { dt_flags = dyn->d_un.d_val; LOGI("DT_FLAGS: 0x%lx", dt_flags); }
+            if (dyn->d_tag == DT_FLAGS_1) { dt_flags_1 = dyn->d_un.d_val; LOGI("DT_FLAGS_1: 0x%lx", dt_flags_1); }
+            dyn++;
+        }
+        if (preinit_array && preinit_array_size > 0) {
+            size_t count = preinit_array_size / sizeof(Elf64_Addr);
+            LOGI("Calling %zu pre-initialization functions from DT_PREINIT_ARRAY", count);
+            for (size_t j = 0; j < count; j++) {
+                if (preinit_array[j]) {
+                    LOGI("Calling pre-initialization function at %p", (void *)preinit_array[j]);
+                    ((void (*)())preinit_array[j])();
+                }
+            }
+        }
+        if (init_func) {
+            LOGI("Calling DT_INIT at %p", (void *)init_func);
+            ((void (*)())init_func)();
+        }
+        if (init_array && init_array_size > 0) {
+            size_t count = init_array_size / sizeof(Elf64_Addr);
+            LOGI("Calling %zu constructors from DT_INIT_ARRAY", count);
+            for (size_t j = 0; j < count; j++) {
+                if (init_array[j]) {
+                    LOGI("Calling constructor at %p", (void *)init_array[j]);
+                    ((void (*)())init_array[j])();
+                }
+            }
+        }
+        obj.fini_func = fini_func;
+        obj.fini_array = fini_array;
+        obj.fini_array_size = fini_array_size;
     }
     if (obj.tls_block) {
         LOGI("Setting TLS block");
@@ -516,11 +521,9 @@ ELFObject load_elf(void *elf_mem, size_t size) {
         asm volatile("msr tpidr_el0, %0" : : "r"(obj.tls_block));
 #elif defined(__x86_64__)
         asm volatile("movq %0, %%fs:0" : : "r"(obj.tls_block));
-#else
-#warning "TLS setting not implemented for this architecture"
 #endif
     }
-    void* epoint = (void *)((char *)obj.base + obj.ehdr->e_entry);
+    void *epoint = (void *)((char *)obj.base + obj.ehdr->e_entry);
     register void *sp asm("sp");
     sp = (void *)(((uintptr_t)sp) & ~0xF);
     LOGI("Jumping to entry point: %p", epoint);
