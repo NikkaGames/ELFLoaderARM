@@ -308,6 +308,17 @@ void *resolve_symbol(const char *name, ELFObject obj) {
     return dlsym(RTLD_DEFAULT, name);
 }
 
+static inline size_t page_align_down(size_t x, size_t page) { return x & ~(page - 1); }
+static inline size_t page_align_up(size_t x, size_t page) { return (x + page - 1) & ~(page - 1); }
+
+static inline int prot_from_pflags(Elf64_Word p_flags) {
+    int prot = 0;
+    if (p_flags & PF_R) prot |= PROT_READ;
+    if (p_flags & PF_W) prot |= PROT_WRITE;
+    if (p_flags & PF_X) prot |= PROT_EXEC;
+    return prot;
+}
+
 ELFObject load_elf(void *elf_mem, size_t size) {
 #ifdef p_type
 #undef p_type
@@ -327,22 +338,60 @@ ELFObject load_elf(void *elf_mem, size_t size) {
             if (end > mem_size) mem_size = end;
         }
     }
-    mem_size = get_random_mem_size(mem_size);
-    obj.base = mmap(nullptr, mem_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (obj.base == MAP_FAILED) {
-        LOGE("Memory allocation failed");
+    size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+    mem_size = page_align_up(mem_size, page_size);
+    void *reserved = mmap(nullptr, mem_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserved == MAP_FAILED) {
+        LOGE(_("Reserve mmap failed: %d"), errno);
         obj.base = nullptr;
         return obj;
     }
-    LOGI("Allocated memory at %p (size: %zu)", obj.base, mem_size);
+    obj.base = reserved;
+    LOGI(_("Reserved address space at %p (size: %zu)"), obj.base, mem_size);
     for (int i = 0; i < obj.ehdr->e_phnum; i++) {
         if (obj.phdr[i].p_type == PT_LOAD) {
-            memcpy((char *)obj.base + obj.phdr[i].p_vaddr, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
-            if (obj.phdr[i].p_memsz > obj.phdr[i].p_filesz) {
-                memset((char *)obj.base + obj.phdr[i].p_vaddr + obj.phdr[i].p_filesz, 0, obj.phdr[i].p_memsz - obj.phdr[i].p_filesz);
+            Elf64_Off file_off = obj.phdr[i].p_offset;
+            Elf64_Addr vaddr = obj.phdr[i].p_vaddr;
+            size_t filesz = obj.phdr[i].p_filesz;
+            size_t memsz = obj.phdr[i].p_memsz;
+            size_t seg_start = (size_t)obj.base + vaddr;
+            size_t map_start = page_align_down(seg_start, page_size);
+            size_t map_end = page_align_up(seg_start + memsz, page_size);
+            size_t map_size = map_end - map_start;
+            size_t inpage_offset = seg_start - map_start;
+            int final_prot = prot_from_pflags(obj.phdr[i].p_flags);
+            int initial_prot = final_prot;
+            if (!(initial_prot & PROT_WRITE)) initial_prot |= PROT_WRITE;
+#ifdef MAP_FIXED_NOREPLACE
+            void *m = mmap((void*)map_start, map_size, initial_prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+            if (m == MAP_FAILED && errno == EEXIST) {
+                m = mmap((void*)map_start, map_size, initial_prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
+#else
+            void *m = mmap((void*)map_start, map_size, initial_prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+#endif
+            if (m == MAP_FAILED) {
+                LOGE(_("mmap segment failed at %p size %zu errno=%d"), (void*)map_start, map_size, errno);
+                munmap(obj.base, mem_size);
+                obj.base = nullptr;
+                return obj;
+            }
+            if (filesz > 0) {
+                memcpy((char*)m + inpage_offset, (char*)elf_mem + file_off, filesz);
+            }
+            if (memsz > filesz) {
+                memset((char*)m + inpage_offset + filesz, 0, memsz - filesz);
+            }
+            if (mprotect((void*)map_start, map_size, final_prot) != 0) {
+                LOGW(_("mprotect failed for %p size %zu errno=%d"), (void*)map_start, map_size, errno);
+            }
+            if (final_prot & PROT_EXEC) {
+                __builtin___clear_cache((char*)map_start, (char*)map_start + map_size);
+            }
+            LOGI(_("Mapped PT_LOAD at %p size %zu prot=%d"), (void*)map_start, map_size, final_prot);
         } else if (obj.phdr[i].p_type == PT_TLS) {
-            obj.tls_block = mmap(nullptr, obj.phdr[i].p_memsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            size_t tls_size = page_align_up(obj.phdr[i].p_memsz, page_size);
+            obj.tls_block = mmap(nullptr, tls_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if (obj.tls_block != MAP_FAILED) {
                 memcpy((char *)obj.tls_block, (char *)elf_mem + obj.phdr[i].p_offset, obj.phdr[i].p_filesz);
                 if (obj.phdr[i].p_memsz > obj.phdr[i].p_filesz) {
